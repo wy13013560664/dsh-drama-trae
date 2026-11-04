@@ -1,0 +1,5 @@
+# dsh-drama-trae bundle patch —— 只挂宿主半身，零硬依赖。
+- insert:
+    - id: drama-trae
+      name: 'dsh-drama-trae'
+      config: {}
