@@ -60,9 +60,27 @@ export const DEFAULT_RESOLUTION = '720p'
 export const DEFAULT_RATIO = 'adaptive'
 export const DEFAULT_DURATION = 5
 export const MAX_DURATION = 15
-export const MIN_DURATION = 2
+/**
+ * 时长下限 4 秒 —— 来自服务端实测拒绝，不是保守估计。
+ *
+ * 传 2 或 3 时服务端返回：
+ *   `InvalidParameter: the parameter duration specified in the request is not
+ *    valid for model doubao-seedance-2-0-mini in t2v; received: "2"`
+ * 即模型侧只接受 4~15。二进制 tool Schema 写的 2~15 与真实模型下限不一致，
+ * 按二进制写就会让每个 2s/3s 分镜必然失败一次（实测一集 24 镜里有 8 镜如此）。
+ */
+export const MIN_DURATION = 4
 export const MAX_IMAGE_REFS = 9
 export const MAX_VIDEO_REFS = 3
+/**
+ * 自动并发天花板。
+ *
+ * 实测：18 并发跑 24 镜时服务端整片 4010（452 次全局拒绝），
+ * 降到 2~6 后同样的账号池能出片。所以自动模式默认不超过 6；
+ * 想开更高用 DSH_TRAE_AUTO_CONCURRENCY 环境变量显式覆盖。
+ */
+export const AUTOCONCURRENCY_CAP = 6
+
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MiB 上限（原串 "100 MiB limit"）
 
 // 生成编排阶段（对齐 GenerateVideo 工具实现状态机）

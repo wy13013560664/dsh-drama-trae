@@ -4,7 +4,10 @@
  * 从 libai_agent.dylib strings 实测还原的约束：
  *  - resolution ∈ {480p, 720p, 1080p, 4k}（默认 720p）
  *  - ratio ∈ {16:9, 4:3, 1:1, 3:4, 9:16, 21:9, adaptive}（默认 adaptive）
- *  - duration = -1（默认 5 秒）或 2~15 秒（默认 5）
+ *  - duration = -1（默认 5 秒）或 4~15 秒（默认 5）
+ *    注意：二进制 Schema 写的是 2~15，但模型侧实测拒绝 2/3
+ *    （`InvalidParameter ... not valid for model doubao-seedance-2-0-mini in t2v`），
+ *    有效下限是 4，以服务端为准。
  *  - image_paths ≤ 9、video_paths ≤ 3
  *  - 生成产物 ≤ 100 MiB
  *
@@ -44,6 +47,24 @@ export function normalizeDuration(v) {
     throw new Error(`duration must be -1 or between ${MIN_DURATION} and ${MAX_DURATION} seconds`)
   }
   return n
+}
+
+/**
+ * 把分镜时长抬进模型真能吃下的区间 —— 出片路径专用，不抛错。
+ *
+ * 分镜表里的 durationSec 是**剪辑意图**（2~3 秒的短切很常见），而模型下限是 4 秒。
+ * 直接按分镜时长发请求必然 `InvalidParameter`，整个镜头白跑一次外加一次换号。
+ * 所以这里抬到下限再发，靠后续剪辑截到目标时长；比例对不上但镜头一定出得来。
+ *
+ * @param {number} want 分镜想要的秒数
+ * @returns {{duration:number, clamped:'below'|'above'|null}}
+ */
+export function clampDurationToModel(want) {
+  const n = Number(want)
+  if (!Number.isFinite(n) || n <= 0) return { duration: DEFAULT_DURATION, clamped: null }
+  if (n < MIN_DURATION) return { duration: MIN_DURATION, clamped: 'below' }
+  if (n > MAX_DURATION) return { duration: MAX_DURATION, clamped: 'above' }
+  return { duration: n, clamped: null }
 }
 
 /** 校验 image_paths / video_paths 数量与类型。 */

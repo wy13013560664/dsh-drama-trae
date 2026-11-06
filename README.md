@@ -126,9 +126,10 @@ node cli.mjs --project 都市夜雨 --episode 第01集 \
 | `--shots 1,2,3` | 全部 | 只生成指定镜号 |
 | `--ratio 9:16` | 9:16 | 画幅：9:16 / 16:9 / 1:1 等 |
 | `--resolution 720p` | 720p | 480p/720p/1080p |
-| `--duration 5` | 分镜时长 | 单镜秒数（2~15） |
+| `--duration 5` | 分镜时长 | 单镜秒数（**4~15**，模型侧实测下限 4；分镜里的 2/3 秒会被自动抬到 4 并告警） |
 | `--drama-root <目录>` | 自动探测 | ai-drama 根目录（默认 `~/Documents/ShiPin/AI短剧`） |
 | `--dry-run` | 关 | 只计划不出片，验证 prompt 与路径 |
+| `--concurrency N` | 自动 | 并发镜数；自动模式上限 6（可用 `DSH_TRAE_AUTO_CONCURRENCY` 覆盖），再按服务端限流自动收紧 |
 | `--list` | - | 列出所有项目与分镜 |
 
 ---
@@ -177,16 +178,31 @@ dsh-drama-trae/
 ├── cli.mjs           # 一键出片命令行
 ├── src/
 │   ├── prompt.js     # 分镜 → 视频 prompt（确定性）
-│   ├── video.js      # 生成引擎（复用 trae-video）
-│   ├── accounts.js   # Trae 账号池
+│   ├── video.js      # 生成引擎 + SSE 两层超时（复用 trae-video）
+│   ├── errors.js     # 【错误分类唯一来源】scope/retriable/冷却/退避
+│   ├── limiter.js    # 【自适应并发】AIMD：撞限流减半、连续成功探回
+│   ├── circuit.js    # 【跑批熔断】连续亚秒拒绝即停手，60s 半开
+│   ├── ranking.js    # 【选号优先级】ok → unknown → expired → pending
+│   ├── recast.js     # 【定妆重出】产出账号失效时换活账号重出
+│   ├── quota.js      # 配额账本（从结果学习，不主动探测）
+│   ├── warmup.js     # 账号预热探针（只到 heartbeat，不产片）
+│   ├── casting.js    # 角色定妆 + 选图（key 绑号）
+│   ├── accounts.js   # TRAE 账号池（轮换 + 冷却）
 │   ├── credential.js # 凭据解析 + 鉴权
-│   ├── validate.js   # 参数校验
-│   ├── jobs.js       # 任务状态管理（前端轮询）
-│   └── constants.js  # TRAE 端点/枚举常量
+│   ├── validate.js   # 参数校验 + 时长抬升到模型区间
+│   ├── jobs.js       # 任务状态（JSONL，超 1.5MB 自动压实）
+│   └── constants.js  # TRAE 端点 / 枚举 / 自动并发上限
+├── test/             # 14 个测试文件，1223 条断言
 ├── package.json
-├── cordis.patch.yml
-└── test-fixture/     # 测试用样例分镜（可删）
+└── cordis.patch.yml
 ```
+
+### 出片链路的四道闸（按执行顺序）
+
+1. **账本预检**（`quota.js`）— 剔除仍在冷却期的账号；过期记录自动复活
+2. **选号排序**（`ranking.js`）— 真出过片的号优先，只拿到过心跳的垫底
+3. **并发闸门**（`limiter.js`）— 撞 4010/429 就减半，连续成功后慢慢探回
+4. **跑批熔断**（`circuit.js`）— 连续亚秒拒绝 = 通道进不去，直接停手并给结论
 
 ---
 
@@ -203,3 +219,15 @@ A: 直接重跑同一条命令，已完成的镜头会自动跳过（幂等）�
 
 **Q: 想换账号避开排队？**
 A: our-free-model 里多登录几个 Trae 账号，本插件会自动轮换。
+
+**Q: 报 `code 4010 access denied` / `code 2001 usage reservation lock is busy`？**
+A: 这两类都不是账号坏，而是**接入通道被并发打满**。本插件的自动并发默认封顶 6，
+撞上就自动减半并退避重试（`--concurrency 2` 可手动压更低）。降到 2~4 基本不再出现。
+
+**Q: 报 `InvalidParameter ... duration ... not valid for model`？**
+A: 模型只接受 4~15 秒（二进制 Schema 写的 2~15 与服务端实况不一致）。分镜里的
+2/3 秒会被自动抬到 4 秒并告警，剪辑时截短即可；`--duration` 传 2/3 会直接报错。
+
+**Q: 账本里一堆 quota，是不是这些号废了？**
+A: 不是。账本是**带时间戳的观测**：quota 冷却 6 小时、broken 10 分钟、auth 30 分钟，
+过期自动放回可用池（会打一条 `quota-revive`）。只有仍在冷却期内的号才跳过。

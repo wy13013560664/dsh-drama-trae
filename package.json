@@ -1,6 +1,6 @@
 {
   "name": "dsh-drama-trae",
-  "version": "0.1.0",
+  "version": "0.26.0",
   "private": true,
   "type": "module",
   "description": "AI 短剧一键出片桥接插件：连接 dsh-plugin-ai-drama（剧本/分镜）与 dsh-trae-video（免费 Trae 账号出视频），把短剧分镜表批量变成视频，写回素材库。",
@@ -39,8 +39,17 @@
     "client.js",
     "cli.mjs",
     "src",
+    "test",
     "cordis.patch.yml",
-    "README.md"
+    "INSTALL.md",
+    "README.md",
+    "ALIGNMENT.md",
+    "FUNCTION-MAP.md",
+    "REPORT-pipeline-upgrade.md",
+    "REPORT-v0.4.0-status.md",
+    "REPORT-ui-audit.md",
+    "test",
+    "REPORT-v0.26.0.md"
   ],
   "license": "MIT"
 }

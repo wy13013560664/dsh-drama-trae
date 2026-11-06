@@ -20,9 +20,28 @@ export function createJobStore({ dataDir = null, ttlMs = 30 * 60 * 1000 } = {}) 
     await fs.mkdir(base, { recursive: true })
   }
 
+  // 追加式日志会随进度无限膨胀（实测 1MB / 507 行里大半是同一任务的重复快照）。
+  // 超过 SOFT_LIMIT 就先压实一次：只保留每个任务的最新快照。
+  const SOFT_LIMIT = 1.5 * 1024 * 1024
+  let appendBytes = 0
+
+  async function compact() {
+    try {
+      const lines = []
+      for (const j of jobs.values()) lines.push(JSON.stringify(j))
+      const tmp = `${logFile}.tmp-${Date.now()}`
+      await fs.writeFile(tmp, lines.length ? lines.join('\n') + '\n' : '', 'utf8')
+      await fs.rename(tmp, logFile)
+      appendBytes = 0
+    } catch { /* 压实失败不影响主流程 */ }
+  }
+
   async function append(job) {
     await ensureDir()
-    await fs.appendFile(logFile, JSON.stringify(job) + '\n', 'utf8')
+    const line = JSON.stringify(job) + '\n'
+    await fs.appendFile(logFile, line, 'utf8')
+    appendBytes += Buffer.byteLength(line)
+    if (appendBytes > SOFT_LIMIT) await compact()
   }
 
   async function restore() {

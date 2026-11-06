@@ -12,7 +12,7 @@
  * @module src/video
  */
 
-import { TRAE, PATHS, STAGES, VIDEO_MODEL, DEFAULT_RESOLUTION, DEFAULT_RATIO, DEFAULT_DURATION, MAX_VIDEO_BYTES } from './constants.js'
+import { TRAE, PATHS, STAGES, VIDEO_MODEL, DEFAULT_RESOLUTION, DEFAULT_RATIO, DEFAULT_DURATION, MIN_DURATION, MAX_DURATION, MAX_VIDEO_BYTES } from './constants.js'
 import { soloHeaders } from './credential.js'
 import { normalizeParams } from './validate.js'
 
@@ -30,7 +30,7 @@ import { normalizeParams } from './validate.js'
  * @param {string[]} [params.video_paths] 视频续写：视频的 TOS key 数组（≤3）
  * @param {string} [params.resolution] 480p|720p|1080p|4k
  * @param {string} [params.ratio] 16:9|4:3|1:1|3:4|9:16|21:9|adaptive
- * @param {number} [params.duration] 秒；-1 或 2~15
+ * @param {number} [params.duration] 秒；-1 或 4~15（下线以服务端实测为准，见 constants.MIN_DURATION）
  * @param {number} [params.total_input_video_duration_ms] 视频续写时输入视频总时长 ms
  */
 export function buildRequestBody(params) {
@@ -50,8 +50,8 @@ export function buildRequestBody(params) {
       : {}),
   }
   if (params.duration !== undefined && params.duration !== -1) {
-    if (params.duration < 2 || params.duration > 15) {
-      throw new Error('duration must be -1 or between 2 and 15 seconds')
+    if (params.duration < MIN_DURATION || params.duration > MAX_DURATION) {
+      throw new Error(`duration must be -1 or between ${MIN_DURATION} and ${MAX_DURATION} seconds`)
     }
   }
   return body
@@ -75,9 +75,37 @@ export async function* consumeSse(response) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  // 两层超时：服务端可能「不发帧也不断连」，裸 await reader.read() 会永久挂住
+  // （实测：某账号请求 3 分钟无任何帧，进程卡死）。所以每帧有 idle 上限、整条流有总上限。
+  const idleMs = Number(process.env.DSH_TRAE_SSE_IDLE_MS || 30000)
+  const totalMs = Number(process.env.DSH_TRAE_SSE_TOTAL_MS || 600000)
+  const startedAt = Date.now()
+  let lastFrameAt = Date.now()
   while (true) {
-    const { done, value } = await reader.read()
+    if (Date.now() - startedAt > totalMs) {
+      try { await reader.cancel() } catch { /* already closed */ }
+      throw new Error(`trae-video: SSE 超过总时长上限 ${Math.round(totalMs / 1000)}s 未结束`)
+    }
+    if (Date.now() - lastFrameAt > idleMs) {
+      try { await reader.cancel() } catch { /* already closed */ }
+      throw new Error(`trae-video: SSE 连续 ${Math.round(idleMs / 1000)}s 无任何帧（服务端静默挂起）`)
+    }
+    let tick
+    try {
+      tick = await Promise.race([
+        reader.read(),
+        new Promise((_, rej) => {
+          const t = setTimeout(() => rej(new Error('__idle__')), Math.min(idleMs, 5000))
+          if (t.unref) t.unref()
+        }),
+      ])
+    } catch (e) {
+      if (String(e?.message) === '__idle__') { lastFrameAt = lastFrameAt; continue }
+      throw e
+    }
+    const { done, value } = tick
     if (done) break
+    lastFrameAt = Date.now()
     buffer += decoder.decode(value, { stream: true })
     const frames = buffer.split(/\r?\n\r?\n/)
     buffer = frames.pop() ?? ''
@@ -195,7 +223,9 @@ export async function generateVideo(deps) {
       continue
     }
     if (isTerminalError(frame)) {
-      throw new Error(`trae-video: 服务端返回错误 ${JSON.stringify(frame).slice(0, 400)}`)
+      // 不截断：错误里常嵌三层码（3003 外层 → 4008/4040 内层 → callArkVideoGeneration 细节），
+      // 截断就丢掉了真正原因。
+      throw new Error(`trae-video: 服务端返回错误 ${JSON.stringify(frame)}`)
     }
     if (frame.event === 'done') {
       onProgress('done', { finish_reason: frame.data?.finish_reason })
