@@ -422,7 +422,9 @@ export async function runOneShotDrama(opts = {}) {
     : Math.min(usable.length, planned.length, autoCap)
   const n = Math.max(1, workerCount)
   // 自适应闸门：遇到全局限流就乘性减半，连续成功再加性探回。
-  const limiter = createLimiter({ target: n, successStreak: 6 })
+  // successStreak=3：被误罚到 1 之后，3 次成功就能探回 2，
+  // 不至于整集卡在串行（实测取 6 时 14 镜里探不回来）。
+  const limiter = createLimiter({ target: n, successStreak: 3 })
   // 跑批熔断：整池账号在亚秒内被一起拒时立刻停手，不空转几十次请求（见 src/circuit.js）
   const circuit = createRunCircuit({
     threshold: Number(process.env.DSH_TRAE_TRIP_THRESHOLD || 8),
@@ -683,10 +685,21 @@ export async function runOneShotDrama(opts = {}) {
         if (cls.scope === 'global') {
           // 平台侧瞬时拒绝：换号无效（全池一起被拒），只有退避重试有效。
           // 这类重试不吃账号轮转预算，单独计数，否则「试遍账号」=「试一次就放弃」。
-          // 撞上全局限流就立刻收紧并发：拒绝是并发打满导致的，
-          // 只退避不降并发，醒来还是以同样的并发撞同一堵墙。
-          const newLimit = limiter.penalize()
-          onProgress({ type: 'throttle', limit: newLimit, kind: cls.kind, ...limiter.snapshot() })
+          //
+          // 是否收紧并发要分类看，不能一刀切（实测教训）：整集跑批里 2 次
+          // `2001 lock-busy` 把并发从 3 一路减半到 1，之后十几镜全串行执行，
+          // 白白多跑了半小时。lock-busy 是**该账号自己的用量锁**被占
+          // （上一个请求还没在服务端释放），解法是「等一会儿用同一个号」，
+          // 与全局并发无关；把它当限流惩罚是过度反应。
+          // 真正代表「通道被打满」的是 access-denied 与 rate-limit。
+          const channelWide = cls.kind === 'access-denied' || cls.kind === 'rate-limit'
+          const newLimit = channelWide
+            ? limiter.penalize()
+            : limiter.snapshot().limit
+          onProgress({
+            type: channelWide ? 'throttle' : 'retry-global',
+            limit: newLimit, kind: cls.kind, penalized: channelWide, ...limiter.snapshot(),
+          })
           if (globalRetries >= maxGlobalRetries) break
           const waitMs = backoffFor(cls.backoffMs, globalRetries, 60_000)
           globalRetries += 1

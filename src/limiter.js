@@ -18,10 +18,11 @@
 /**
  * @param {object} opts
  * @param {number} opts.target 目标并发上限（不再往上加的天花板）
- * @param {number} [opts.successStreak] 连续成功多少次后 +1，默认 6
+ * @param {number} [opts.successStreak] 连续成功多少次后 +1，默认 3
+ *   （实测：取 6 时被误罚到 1 之后要 6 镜才探回 2，整集都卡在串行）
  * @returns {object} 闸门
  */
-export function createLimiter({ target, successStreak = 6 } = {}) {
+export function createLimiter({ target, successStreak = 3 } = {}) {
   const ceiling = Math.max(1, Number(target) || 1)
   let limit = ceiling           // 当前允许的在飞数
   let inFlight = 0

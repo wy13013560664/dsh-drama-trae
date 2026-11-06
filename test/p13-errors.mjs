@@ -331,6 +331,22 @@ ok('成功路径释放租约', /busyUids\.delete\(String\(credential\.uid\)\)[\s
    '失败/成功两条路径都要释放，否则租约泄漏后全池被占死')
 ok('全池被占时不报错而是等一轮', /所有存活号都在被别的 worker 使用/.test(idx))
 
+console.log('\n[11c] 并发惩罚必须分类型（实测：2 次 lock-busy 把并发从 3 降到 1，整集串行）')
+ok('只有通道级故障才降并发',
+   /const channelWide = cls\.kind === 'access-denied' \|\| cls\.kind === 'rate-limit'/.test(idx),
+   'lock-busy 是单账号用量锁，降全局并发是过度反应')
+ok('非通道级保持原并发', /: limiter\.snapshot\(\)\.limit/.test(idx))
+ok('事件区分是否惩罚', /penalized: channelWide/.test(idx))
+ok('探回速度 3 次成功', /successStreak = 3/.test((await fs.readFile(new URL('../src/limiter.js', import.meta.url), 'utf8'))),
+   '取 6 时 14 镜内探不回 2')
+{
+  const l = createLimiter({ target: 4, successStreak: 3 })
+  l.penalize(); l.penalize()   // 4 → 2 → 1
+  ok('连续惩罚能到 1', l.snapshot().limit === 1)
+  l.reward(); l.reward(); l.reward()
+  ok('3 次成功探回 2', l.snapshot().limit === 2, String(l.snapshot().limit))
+}
+
 console.log('\n[12] 前端：partial 也必须停轮询（真实 bug：按钮永久禁用）')
 const cli = await fs.readFile(new URL('../client.js', import.meta.url), 'utf8')
 ok('终态集合含 partial', /TERMINAL_JOB_STATUS = new Set\(\['done', 'failed', 'partial', 'cancelled'\]\)/.test(cli))
