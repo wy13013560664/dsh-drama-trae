@@ -9,6 +9,27 @@
 3. **dsh-our-free-model** —— 提供免费 Trae 账号（本插件出片的凭据）
 4. Node.js `^22.19.0 || >=24.0.0`
 
+## 从 GitHub 拉取源码继续开发（推荐开发用）
+
+仓库：<https://github.com/wy13013560664/dsh-drama-trae>
+
+```bash
+git clone https://github.com/wy13013560664/dsh-drama-trae.git
+cd dsh-drama-trae
+ls test/                        # 14 个测试文件，直接 node test/pN-*.mjs 跑
+node cli.mjs --list --drama-root ~/Documents/ShiPin/AI短剧
+```
+
+挂进 DSH profile（软链，改源码即时生效）：
+
+```bash
+ln -sfn "$PWD" ~/.dsh/profiles/desktop/node_modules/dsh-drama-trae
+# 重启 DSH，侧栏出现「AI 短剧出片」
+```
+
+> 本仓库与 `dsh-trae-video`（出片引擎）配套使用；两者可分别 clone，
+> 也可在同一目录下并列，`dsh-drama-trae` 会按 `TRAE_ACCOUNT_*` 凭据走。
+
 ## 方式 A：`dsh plugin add`（推荐）
 
 ```bash

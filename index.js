@@ -111,7 +111,29 @@ export async function runOneShotDrama(opts = {}) {
   // 收集要生成的分镜
   const shots = await collectShots(storyboardDir, { episode, onlyShots })
   if (shots.length === 0) {
-    throw new Error(`drama-trae: 未找到分镜（${storyboardDir}）`)
+    // 报错必须说清是哪一种「没找到」，否则用户会以为分镜丢了。
+    // 实测踩过：只传了已不存在的镜号（上游把 24 镜改成 18 镜），
+    // 旧文案只说「未找到分镜（目录）」，看起来像整个项目坏了。
+    let availableNums = []
+    let availableFiles = []
+    try {
+      availableFiles = (await fs.readdir(storyboardDir)).filter((f) => f.endsWith('.json'))
+      for (const f of availableFiles) {
+        try {
+          const arr = JSON.parse(await fs.readFile(path.join(storyboardDir, f), 'utf8'))
+          if (Array.isArray(arr)) {
+            availableNums = arr.map((x) => String(x?.shotNumber ?? x?.shot ?? '')).filter(Boolean)
+          }
+        } catch { /* 坏文件忽略 */ }
+      }
+    } catch { /* 目录不可读 */ }
+    const asked = onlyShots ? `所选镜号 ${onlyShots.join(',')}` : (episode ? `集「${episode}」` : '任何分镜')
+    throw new Error(
+      availableNums.length
+        ? `drama-trae: ${asked} 在该集分镜里不存在。当前分镜共 ${availableNums.length} 镜（镜号 ${availableNums[0]}~${availableNums[availableNums.length - 1]}）`
+          + `；若上游改过集结构，请刷新分镜或改用存在的镜号。目录：${storyboardDir}`
+        : `drama-trae: 未找到分镜（${storyboardDir}）`
+          + (availableFiles.length ? `，目录里有 ${availableFiles.length} 个 json 但读不出镜头数组` : '，目录里没有 json 文件'))
   }
   const total = shots.length
 
